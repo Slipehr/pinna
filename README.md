@@ -29,7 +29,8 @@ It was built and tested on Pop!_OS 24.04 with PipeWire 1.6.8.
 ```
 
 Settings take effect as you change them and stay in place after the app is
-closed and after a reboot. The app does not need to keep running.
+closed and after a reboot. The app only needs to keep running for the panel
+icon.
 
 Two command-line modes exist for scripting and debugging:
 
@@ -37,6 +38,7 @@ Two command-line modes exist for scripting and debugging:
 |---|---|
 | `--apply` | Re-apply the saved settings (rewrite config, start or stop the filter services) |
 | `--print-conf` | Print the PipeWire filter modules the current settings generate |
+| `--background` | Start hidden, with only the panel icon |
 
 ## Features
 
@@ -52,6 +54,21 @@ These talk to the USB receiver, which is readable only by root by default.
 Click **Grant access** once and enter your password. This installs a udev rule
 (see [Files](#files-the-app-creates)) that gives the logged-in user access to
 that one device.
+
+### Panel icon
+
+While Pinna is running, a tray icon in the panel shows the battery percentage
+as a number on a coloured tile: green, amber at 30% or less, red at 15% or
+less, blue while charging, grey when the headset is off. Its menu opens the
+window or quits.
+
+- Closing the window keeps Pinna running in the panel. Use **Quit** in the
+  icon's menu to stop it.
+- **Start at login** (shown when running from the AppImage) starts Pinna hidden
+  at login, so the battery level is always in the panel.
+- The icon needs a panel that supports StatusNotifierItem tray icons (COSMIC,
+  KDE Plasma, and GNOME with the AppIndicator extension). Without one, Pinna
+  behaves as a normal window and closing it quits.
 
 ### Sound
 
@@ -123,6 +140,7 @@ settings can still be changed while it is switched off.
 | `~/.config/pinna/settings.json` | Saved settings |
 | `~/.config/pipewire/pinna-<filter>.conf` | Generated config for each enabled filter |
 | `~/.config/systemd/user/pinna-filter@.service` | Service template for the filters |
+| `~/.config/autostart/pinna.desktop` | Created by **Start at login**; points at the AppImage's current location |
 | `~/.local/share/pinna/` | Copies of the RNNoise plugin and surround profiles, at a path that stays valid after the AppImage closes |
 | `/etc/udev/rules.d/70-pinna.rules` | Device permission, created by **Grant access** |
 
@@ -167,6 +185,7 @@ systemctl --user disable --now 'pinna-filter@eq' 'pinna-filter@surround' 'pinna-
 rm ~/.config/systemd/user/pinna-filter@.service
 rm ~/.config/pipewire/pinna-*.conf
 rm -r ~/.config/pinna ~/.local/share/pinna
+rm -f ~/.config/autostart/pinna.desktop
 sudo rm /etc/udev/rules.d/70-pinna.rules
 systemctl --user daemon-reload
 ```

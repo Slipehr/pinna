@@ -8,7 +8,10 @@ Sound and microphone effects are PipeWire filter-chain nodes, each run by its
 own user service (pinna-filter@<name>) from ~/.config/pipewire/. Sidetone, battery and auto power-off
 go through the bundled HeadsetControl binary.
 
-CLI: --apply (re-apply saved settings), --print-conf (show generated config).
+While running it shows the battery percentage as a panel (tray) icon.
+
+CLI: --apply (re-apply saved settings), --print-conf (show generated config),
+--background (start hidden in the panel).
 """
 import glob
 import json
@@ -67,6 +70,7 @@ SURROUND_PROFILES = {
     "Creative SBX": "sbx67",
     "Dolby Headphone (theatre)": "dht",
 }
+AUTOSTART_PATH = os.path.join(HOME, ".config/autostart/pinna.desktop")
 UDEV_RULE_PATH = "/etc/udev/rules.d/70-pinna.rules"
 USB_VENDOR, USB_PRODUCT = "046d", "0af7"
 UDEV_RULE = (
@@ -511,7 +515,172 @@ def main_gui():
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, GLib, Gtk
+    from gi.repository import Adw, Gio, GLib, Gtk
+    import cairo
+
+    V = GLib.Variant
+    SNI_IFACE = "org.kde.StatusNotifierItem"
+    MENU_IFACE = "com.canonical.dbusmenu"
+    SNI_XML = """<node><interface name="org.kde.StatusNotifierItem">
+      <property name="Category" type="s" access="read"/>
+      <property name="Id" type="s" access="read"/>
+      <property name="Title" type="s" access="read"/>
+      <property name="Status" type="s" access="read"/>
+      <property name="IconName" type="s" access="read"/>
+      <property name="IconPixmap" type="a(iiay)" access="read"/>
+      <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
+      <property name="ItemIsMenu" type="b" access="read"/>
+      <property name="Menu" type="o" access="read"/>
+      <method name="Activate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+      <method name="SecondaryActivate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+      <method name="ContextMenu"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+      <method name="Scroll"><arg type="i" direction="in"/><arg type="s" direction="in"/></method>
+      <signal name="NewIcon"/><signal name="NewToolTip"/>
+    </interface></node>"""
+    MENU_XML = """<node><interface name="com.canonical.dbusmenu">
+      <property name="Version" type="u" access="read"/>
+      <property name="TextDirection" type="s" access="read"/>
+      <property name="Status" type="s" access="read"/>
+      <property name="IconThemePath" type="as" access="read"/>
+      <method name="GetLayout"><arg type="i" direction="in"/><arg type="i" direction="in"/>
+        <arg type="as" direction="in"/><arg type="u" direction="out"/><arg type="(ia{sv}av)" direction="out"/></method>
+      <method name="GetGroupProperties"><arg type="ai" direction="in"/><arg type="as" direction="in"/>
+        <arg type="a(ia{sv})" direction="out"/></method>
+      <method name="GetProperty"><arg type="i" direction="in"/><arg type="s" direction="in"/>
+        <arg type="v" direction="out"/></method>
+      <method name="Event"><arg type="i" direction="in"/><arg type="s" direction="in"/>
+        <arg type="v" direction="in"/><arg type="u" direction="in"/></method>
+      <method name="EventGroup"><arg type="a(isvu)" direction="in"/><arg type="ai" direction="out"/></method>
+      <method name="AboutToShow"><arg type="i" direction="in"/><arg type="b" direction="out"/></method>
+      <method name="AboutToShowGroup"><arg type="ai" direction="in"/>
+        <arg type="ai" direction="out"/><arg type="ai" direction="out"/></method>
+      <signal name="LayoutUpdated"><arg type="u"/><arg type="i"/></signal>
+    </interface></node>"""
+
+    class Tray:
+        """Panel icon showing the battery percentage (StatusNotifierItem over D-Bus).
+
+        GTK 4 has no tray API, so the two small D-Bus interfaces a panel expects
+        are served directly: the item itself and its menu.
+        """
+        OPEN, QUIT = 3, 4
+
+        def __init__(self, on_open, on_quit):
+            self.on_open, self.on_quit = on_open, on_quit
+            self.level, self.charging = None, False
+            self.revision = 1
+            self.ok = False
+            try:
+                self.conn = Gio.bus_get_sync(Gio.BusType.SESSION)
+                self.conn.register_object("/StatusNotifierItem", Gio.DBusNodeInfo.new_for_xml(SNI_XML).interfaces[0],
+                                          self.sni_call, self.sni_get, None)
+                self.conn.register_object("/MenuBar", Gio.DBusNodeInfo.new_for_xml(MENU_XML).interfaces[0],
+                                          self.menu_call, self.menu_get, None)
+                self.conn.call_sync("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher",
+                                    "org.kde.StatusNotifierWatcher", "RegisterStatusNotifierItem",
+                                    V("(s)", (self.conn.get_unique_name(),)), None,
+                                    Gio.DBusCallFlags.NONE, 2000, None)
+                self.ok = True
+            except GLib.Error:
+                pass  # no tray host in this desktop; the app then behaves like a normal window
+
+        def text(self):
+            if self.level is None:
+                return "Headset off or not found"
+            return "Battery %d%%%s" % (self.level, " (charging)" if self.charging else "")
+
+        def pixmap(self, size=48):
+            """Draw the percentage on a coloured tile; panels cannot show text next to an icon."""
+            if self.level is None:
+                colour, label = (0.45, 0.47, 0.52), "\u2013"
+            else:
+                label = str(self.level)
+                colour = ((0.20, 0.52, 0.89) if self.charging else (0.85, 0.22, 0.20) if self.level <= 15
+                          else (0.90, 0.58, 0.10) if self.level <= 30 else (0.18, 0.62, 0.38))
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+            c = cairo.Context(surface)
+            r = size * 0.22
+            c.new_sub_path()
+            for cx, cy, a in ((size - r, r, -90), (size - r, size - r, 0), (r, size - r, 90), (r, r, 180)):
+                c.arc(cx, cy, r, a * 3.14159 / 180, (a + 90) * 3.14159 / 180)
+            c.close_path()
+            c.set_source_rgb(*colour)
+            c.fill()
+            c.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+            c.set_font_size(size * (0.46 if len(label) > 2 else 0.64))
+            ext = c.text_extents(label)
+            c.move_to((size - ext.width) / 2 - ext.x_bearing, (size - ext.height) / 2 - ext.y_bearing)
+            c.set_source_rgb(1, 1, 1)
+            c.show_text(label)
+            surface.flush()
+            bgra = bytes(surface.get_data())
+            argb = bytearray(len(bgra))  # the tray protocol wants big-endian ARGB
+            argb[0::4], argb[1::4], argb[2::4], argb[3::4] = bgra[3::4], bgra[2::4], bgra[1::4], bgra[0::4]
+            return [(size, size, bytes(argb))]
+
+        def update(self, level, charging):
+            if not self.ok or (level, charging) == (self.level, self.charging):
+                return
+            self.level, self.charging = level, charging
+            self.revision += 1
+            self.conn.emit_signal(None, "/StatusNotifierItem", SNI_IFACE, "NewIcon", None)
+            self.conn.emit_signal(None, "/StatusNotifierItem", SNI_IFACE, "NewToolTip", None)
+            self.conn.emit_signal(None, "/MenuBar", MENU_IFACE, "LayoutUpdated", V("(ui)", (self.revision, 0)))
+
+        def sni_get(self, _conn, _sender, _path, _iface, prop):
+            return {
+                "Category": V("s", "Hardware"), "Id": V("s", "pinna"), "Title": V("s", "Pinna"),
+                "Status": V("s", "Active"), "IconName": V("s", ""),
+                "IconPixmap": V("a(iiay)", self.pixmap()),
+                "ToolTip": V("(sa(iiay)ss)", ("", [], "Pinna", self.text())),
+                "ItemIsMenu": V("b", False), "Menu": V("o", "/MenuBar"),
+            }[prop]
+
+        def sni_call(self, _conn, _sender, _path, _iface, method, _params, invocation):
+            if method in ("Activate", "SecondaryActivate"):
+                self.on_open()
+            invocation.return_value(None)
+
+        def items(self):
+            return {
+                1: {"label": V("s", self.text()), "enabled": V("b", False)},
+                2: {"type": V("s", "separator")},
+                self.OPEN: {"label": V("s", "Open Pinna")},
+                self.QUIT: {"label": V("s", "Quit")},
+            }
+
+        def menu_get(self, _conn, _sender, _path, _iface, prop):
+            return {"Version": V("u", 3), "TextDirection": V("s", "ltr"), "Status": V("s", "normal"),
+                    "IconThemePath": V("as", [])}[prop]
+
+        def click(self, item, event):
+            if event == "clicked" and item == self.OPEN:
+                self.on_open()
+            elif event == "clicked" and item == self.QUIT:
+                self.on_quit()
+
+        def menu_call(self, _conn, _sender, _path, _iface, method, params, invocation):
+            args = params.unpack()
+            result = None
+            if method == "GetLayout":
+                children = [V("(ia{sv}av)", (i, props, [])) for i, props in self.items().items()]
+                result = V("(u(ia{sv}av))", (self.revision, (0, {"children-display": V("s", "submenu")}, children)))
+            elif method == "GetGroupProperties":
+                wanted = args[0] or list(self.items())
+                result = V("(a(ia{sv}))", ([(i, p) for i, p in self.items().items() if i in wanted],))
+            elif method == "GetProperty":
+                result = V("(v)", (self.items().get(args[0], {}).get(args[1], V("s", "")),))
+            elif method == "Event":
+                self.click(args[0], args[1])
+            elif method == "EventGroup":
+                for item, event, _data, _time in args[0]:
+                    self.click(item, event)
+                result = V("(ai)", ([],))
+            elif method == "AboutToShow":
+                result = V("(b)", (False,))
+            elif method == "AboutToShowGroup":
+                result = V("(aiai)", ([], []))
+            invocation.return_value(result)
 
     def in_thread(work, done=None):
         def target():
@@ -521,8 +690,11 @@ def main_gui():
         threading.Thread(target=target, daemon=True).start()
 
     class Window(Adw.ApplicationWindow):
-        def __init__(self, app):
+        def __init__(self, app, tray):
             super().__init__(application=app, title="Pinna", default_width=620, default_height=860)
+            self.tray = tray
+            # With a tray icon, closing the window keeps Pinna running in the panel.
+            self.set_hide_on_close(tray.ok)
             self.s = load_settings()
             self.loading = True
             self.pending = {}
@@ -617,6 +789,17 @@ def main_gui():
             mic.add(self.mic_ns)
             self.vad = self.scale_row(mic, "Strength", "Higher cuts more noise but may clip quiet speech",
                                       0, 95, 5, self.s["mic_vad"], self.on_vad)
+
+            # --- Panel icon
+            appimage = os.environ.get("APPIMAGE")
+            if self.tray.ok and appimage:
+                gen = Adw.PreferencesGroup(title="Panel icon")
+                page.add(gen)
+                auto = Adw.SwitchRow(title="Start at login",
+                                     subtitle="Shows the battery level in the panel without opening this window")
+                auto.set_active(os.path.exists(AUTOSTART_PATH))
+                auto.connect("notify::active", self.on_autostart, appimage)
+                gen.add(auto)
 
             self.loading = False
             self.sync_sensitivity()
@@ -754,8 +937,18 @@ def main_gui():
                     self.status.set_subtitle("Receiver found, headset is off or not responding")
                 self.battery.set_label(("Battery %d%%" % level) + (" (charging)" if charging else "")
                                        if usable else "")
+                self.tray.update(level if usable else None, charging)
             in_thread(work, done)
             return True
+
+        def on_autostart(self, row, _param, appimage):
+            if row.get_active():
+                os.makedirs(os.path.dirname(AUTOSTART_PATH), exist_ok=True)
+                with open(AUTOSTART_PATH, "w") as f:
+                    f.write("[Desktop Entry]\nType=Application\nName=Pinna\n"
+                            'Exec="%s" --background\nTerminal=false\n' % appimage)
+            elif os.path.exists(AUTOSTART_PATH):
+                os.remove(AUTOSTART_PATH)
 
         def on_grant(self, _button):
             def done(ok):
@@ -786,7 +979,18 @@ def main_gui():
             self.debounce("auto_off", lambda: self.device_set("-i", self.s["auto_off"], "auto power-off"), 800)
 
     app = Adw.Application(application_id=APP_ID)
-    app.connect("activate", lambda a: (a.get_active_window() or Window(a)).present())
+    state = {}
+
+    def activate(a):
+        first = "win" not in state
+        if first:
+            tray = Tray(lambda: state["win"].present(), a.quit)
+            state["win"] = Window(a, tray)
+        # --background starts hidden in the panel; a second launch always shows the window.
+        if not (first and "--background" in sys.argv and state["win"].tray.ok):
+            state["win"].present()
+
+    app.connect("activate", activate)
     return app.run(None)
 
 
