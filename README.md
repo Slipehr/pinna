@@ -28,6 +28,9 @@ It was built and tested on Pop!_OS 24.04 with PipeWire 1.6.8.
 ./Pinna-x86_64.AppImage
 ```
 
+The **About** button in the window's title bar and `./Pinna-x86_64.AppImage --version`
+show which version you are running.
+
 Settings take effect as you change them and stay in place after the app is
 closed and after a reboot. The app only needs to keep running for the panel
 icon.

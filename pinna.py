@@ -11,7 +11,7 @@ go through the bundled HeadsetControl binary.
 While running it shows the battery percentage as a panel (tray) icon.
 
 CLI: --apply (re-apply saved settings), --print-conf (show generated config),
---background (start hidden in the panel).
+--background (start hidden in the panel), --version.
 """
 import glob
 import json
@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 
+VERSION = "0.1.0"
 APP_ID = "io.github.pinna"
 HERE = os.path.dirname(os.path.realpath(__file__))
 APPDIR = os.environ.get("APPDIR", "")
@@ -704,6 +705,9 @@ def main_gui():
             header = Adw.HeaderBar()
             self.battery = Gtk.Label(css_classes=["dim-label"])
             header.pack_end(self.battery)
+            about = Gtk.Button(icon_name="help-about-symbolic", tooltip_text="About Pinna")
+            about.connect("clicked", self.on_about)
+            header.pack_start(about)
             view.add_top_bar(header)
             page = Adw.PreferencesPage()
             view.set_content(page)
@@ -978,6 +982,14 @@ def main_gui():
             self.s["auto_off"] = int(row.get_value())
             self.debounce("auto_off", lambda: self.device_set("-i", self.s["auto_off"], "auto power-off"), 800)
 
+        def on_about(self, _button):
+            Adw.AboutWindow(
+                transient_for=self, application_name="Pinna", application_icon="audio-headset",
+                version=VERSION, developer_name="Slipehr", copyright="Copyright 2026 Slipehr",
+                website="https://github.com/Slipehr/pinna",
+                comments="Sound, microphone and device settings for the PRO X 2 LIGHTSPEED headset",
+            ).present()
+
     app = Adw.Application(application_id=APP_ID)
     state = {}
 
@@ -995,6 +1007,9 @@ def main_gui():
 
 
 def main():
+    if "--version" in sys.argv:
+        print("Pinna", VERSION)
+        return 0
     if "--print-conf" in sys.argv:
         s = load_settings()
         detect_devices(s)

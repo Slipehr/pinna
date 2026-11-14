@@ -24,6 +24,8 @@ for profile in dtshx atmos gsx sbx67 dht; do
     cp "vendor/hesuvi/extracted/HeSuVi/hrir/$profile.wav" "$APPDIR/usr/share/pinna/hrir/"
 done
 cp pinna.desktop pinna.svg "$APPDIR/"
+VERSION=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' pinna.py)
+echo "X-AppImage-Version=$VERSION" >> "$APPDIR/pinna.desktop"
 cp pinna.svg "$APPDIR/.DirIcon"
 cat > "$APPDIR/AppRun" <<'APPRUN'
 #!/bin/sh
