@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Pinna
+Comment=Sound, microphone and device settings for the PRO X 2 LIGHTSPEED headset
+Exec=pinna
+Icon=pinna
+Categories=AudioVideo;Audio;Settings;
+Terminal=false

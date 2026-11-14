@@ -1,0 +1,4 @@
+vendor/
+build/
+*.AppImage
+__pycache__/

@@ -1,0 +1,32 @@
+Third-party components bundled in the Pinna AppImage
+============================================================
+
+Pinna's own code is under the PolyForm Noncommercial License 1.0.0
+(see LICENSE). The components below are separate works under their own
+licenses, which the Pinna license does not change or restrict.
+
+HeadsetControl 4.2.0 (usr/bin/headsetcontrol)
+  License: GPL-3.0, full text in GPL-3.0.txt
+  Source:  https://github.com/Sapd/HeadsetControl/releases/tag/4.2.0
+
+noise-suppression-for-voice 1.10 (usr/lib/ladspa/librnnoise_ladspa.so)
+  License: GPL-3.0, full text in GPL-3.0.txt
+  Source:  https://github.com/werman/noise-suppression-for-voice/releases/tag/v1.10
+
+hidapi (usr/lib/libhidapi-hidraw.so.0), shipped with HeadsetControl
+  License: GPL-3.0 or BSD-3-clause or the HIDAPI license, see libhidapi-copyright.txt
+  Source:  https://github.com/libusb/hidapi
+
+libudev (usr/lib/libudev.so.1), shipped with HeadsetControl
+  License: LGPL-2.1-or-later, see libudev-copyright.txt
+  Source:  https://github.com/systemd/systemd
+
+HeSuVi impulse responses (usr/share/pinna/hrir/*.wav)
+  Terms:   see the HeSuVi project
+  Source:  https://sourceforge.net/projects/hesuvi/
+
+AppImage type 2 runtime (the executable header of the AppImage)
+  Terms:   see the project
+  Source:  https://github.com/AppImage/type2-runtime
+
+All binaries are unmodified copies of the upstream releases.
